@@ -1,0 +1,118 @@
+#!/bin/sh
+
+if [ ! -f /etc/sailfish-release ]; then
+  echo "This script only supports Sailfish OS"
+  exit 1
+fi
+
+# Get CPU stats first
+STAT=$(cat /proc/stat)
+
+pretty_time() {
+  TIME=$1
+  DAY=$(expr $TIME / 86400)
+  TIME=$(expr $TIME - $DAY \* 86400)
+  HOUR=$(expr $TIME / 3600)
+  TIME=$(expr $TIME - $HOUR \* 3600)
+  MIN=$(expr $TIME / 60)
+  SEC=$(expr $TIME - $MIN \* 60)
+
+  if [ $DAY -gt 0 ]; then
+    TIME="${DAY}d ${HOUR}h ${MIN}m ${SEC}s"
+  elif [ $HOUR -gt 0 ]; then
+    TIME="${HOUR}h ${MIN}m ${SEC}s"
+  elif [ $MIN -gt 0 ]; then
+    TIME="${MIN}m ${SEC}s"
+  else
+    TIME="${SEC}s"
+  fi
+
+  echo "${TIME}"
+}
+
+# Get Sailfish OS information
+source /etc/sailfish-release
+
+# Get basic information
+USER=$(whoami)
+HOSTNAME=$(cat /etc/hostname)
+KERNEL=$(uname -r)
+NPROC=$(cat /proc/cpuinfo | grep -E "^processor.*: " | wc -l)
+
+# Calculate used/total CPU time since boot
+# used = user + nice + system + irq + softirq
+# free = idle + iowait
+CPU_USED=$(expr $(echo "${STAT}" | grep "cpu  " | awk '{print $2" + "$3" + "$4" + "$7" + "$8}'))
+CPU_IDLE=$(expr $(echo "${STAT}" | grep "cpu  " | awk '{print $5" + "$6}'))
+CPU_USAGE=$(expr $CPU_USED \* 100 / \( $CPU_USED + $CPU_IDLE \))
+
+# Uptime, formatted nicely
+UPTIME=$(awk '{print $1}' /proc/uptime | awk -F'.' '{print $1}')
+UPTIME=$(pretty_time $UPTIME)
+
+# Number of packages
+PKGS=$(rpm -qa | wc -l)
+
+# Some package version numbers
+PK_VERSION=$(rpm -qi PackageKit | grep "Version" | awk '{print $3}')
+BB_VERSION=$(rpm -qi busybox | grep "Version" | awk '{print $3}')
+
+# CPU name
+CPU=$(awk -F':' '/^model name/ {split($2, A, " @"); print A[1]; exit}' /proc/cpuinfo)
+if [ -z "${CPU}" ]; then
+  CPU=$(awk 'BEGIN{FS=": "} /Hardware/ { print $2; exit }' /proc/cpuinfo)
+fi
+
+# Memory information
+MEM_TOTAL=$(expr \( $(free | head -2 | tail -1 | awk -F ':' '{print $2}' | awk '{print $1}') \) / 1024)
+MEM_USED=$(expr \( $(free | head -2 | tail -1 | awk -F ':' '{print $2}' | awk '{print $1" - "$6}') \) / 1024)
+
+# Partition information
+# Note that /home and / may point to the same partition,
+# in which case their stats are identical
+ROOT_TOTAL=$(expr $(df -P / | tail -1 | awk '{print $2}') / 1024)
+ROOT_USED=$(expr $(df -P / | tail -1 | awk '{print $3}') / 1024)
+ROOT_PART=$(expr ${ROOT_USED} \* 100 / ${ROOT_TOTAL})
+HOME_TOTAL=$(expr $(df -P /home | tail -1 | awk '{print $2}') / 1024)
+HOME_USED=$(expr $(df -P /home | tail -1 | awk '{print $3}') / 1024)
+HOME_PART=$(expr ${HOME_USED} \* 100 / ${HOME_TOTAL})
+
+# Setup the printing
+UP="\033[15A\033[33D" # Go to top left corner of the picture
+TAB="\033[33C"        # Go to the right edge of the picture
+G="\033[32m"          # Set text color to green
+N="\033[0m"           # Reset text color
+LOGO="
+
+                 ▗▄▟▖
+              ▗▄▛▀█▌
+            ▄█▛▘ ▗▛
+          ▄█▛▘  ▗▟█▄▖      ▄▄▄█▘
+         ▟▀▐▛▗▄▛▀▘ ▝▀████▛▀▀▘
+        ▐▌ ▝█▛▘  ▄▄█▀▀▘
+        ▐▌   ▀▙▟▛▀
+         ▜▄    ▀▙▖
+          ▝▜▄    █
+           ▐█▜▖  █
+           ▟▌▐▌▗▟▘
+         ▗▟▀▗██▀
+       ▗▟█▙▟▛▀
+    ▄▄██▛▀▘
+ █▛▀▀▀"
+
+# Dump it all!
+echo -e "${LOGO}${UP}${TAB}${G}${USER}${N}@${G}${HOSTNAME}${N}
+${TAB}----------
+${TAB}${G}OS${N}: ${PRETTY_NAME}
+${TAB}${G}Kernel${N}: ${KERNEL}
+${TAB}${G}Uptime${N}: ${UPTIME}
+${TAB}${G}CPU${N}: ${NPROC}x ${CPU}
+${TAB}${G}CPU usage${N}: ${CPU_USAGE}%
+${TAB}${G}Packages${N}: ${PKGS}
+${TAB}${G}PackageKit${N}: ${PK_VERSION}
+${TAB}${G}BusyBox${N}: $BB_VERSION
+${TAB}${G}Memory${N}: ${MEM_USED} MiB / ${MEM_TOTAL} MiB
+${TAB}${G}Root${N}: ${ROOT_USED} MiB / ${ROOT_TOTAL} MiB (${ROOT_PART}%)
+${TAB}${G}Home${N}: ${HOME_USED} MiB / ${HOME_TOTAL} MiB (${HOME_PART}%)
+${TAB}\033[40m   \033[41m   \033[42m   \033[43m   \033[44m   \033[45m   \033[46m   \033[47m   \033[m
+${TAB}\033[48;5;8m   \033[48;5;9m   \033[48;5;10m   \033[48;5;11m   \033[48;5;12m   \033[48;5;13m   \033[48;5;14m   \033[48;5;15m   \033[m\n\n"
